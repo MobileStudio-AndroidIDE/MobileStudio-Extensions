@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/MobileStudio-AndroidIDE/MobileStudio-Extensions/main/schema/extension.schema.json",
+  "title": "MobileStudio Extension",
+  "description": "Manifest describing a MobileStudio extension registered in the MobileStudio-Extensions repository.",
+  "type": "object",
+  "required": ["id", "name", "version", "author", "description", "type", "minMobileStudioVersion", "download"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique extension ID. Lowercase letters, digits, hyphens, underscores and dots; 3-64 chars; must start with a letter or digit.",
+      "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable extension name.",
+      "minLength": 2,
+      "maxLength": 64
+    },
+    "version": {
+      "type": "string",
+      "description": "Extension version (Semantic Versioning: MAJOR.MINOR.PATCH).",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+    },
+    "author": {
+      "type": "string",
+      "description": "Extension author (GitHub username or real name).",
+      "minLength": 2,
+      "maxLength": 64
+    },
+    "description": {
+      "type": "string",
+      "description": "Short description of what the extension does.",
+      "minLength": 8,
+      "maxLength": 512
+    },
+    "type": {
+      "type": "string",
+      "description": "Extension type.",
+      "enum": ["syntax", "theme", "template", "toolchain", "language", "formatter", "linter", "snippets", "plugin"]
+    },
+    "minMobileStudioVersion": {
+      "type": "string",
+      "description": "Minimum MobileStudio app version required by this extension (SemVer).",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+    },
+    "download": {
+      "type": "string",
+      "description": "HTTPS download URL of the extension archive (.zip/.tar.gz). Must be HTTPS.",
+      "pattern": "^https://.+"
+    },
+    "icon": {
+      "type": "string",
+      "description": "Optional HTTPS URL of the extension icon (png/svg).",
+      "pattern": "^https://.+"
+    },
+    "permissions": {
+      "type": "array",
+      "description": "Optional list of permissions the extension requires.",
+      "items": {
+        "type": "string",
+        "enum": ["filesystem", "network", "shell", "terminal", "editor", "build", "adb"]
+      },
+      "uniqueItems": true
+    }
+  }
+}

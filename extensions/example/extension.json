@@ -1,0 +1,12 @@
+{
+  "id": "example",
+  "name": "Example Extension",
+  "version": "1.0.0",
+  "author": "MobileStudio-AndroidIDE",
+  "description": "Example extension showing the registry manifest format. Copy this folder to register your own extension.",
+  "type": "plugin",
+  "minMobileStudioVersion": "1.0.0",
+  "download": "https://github.com/MobileStudio-AndroidIDE/MobileStudio-Extensions/releases/download/example-v1.0.0/example-extension.zip",
+  "icon": "https://raw.githubusercontent.com/MobileStudio-AndroidIDE/MobileStudio-Extensions/main/extensions/example/icon.png",
+  "permissions": ["editor"]
+}

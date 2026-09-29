@@ -1,0 +1,38 @@
+﻿name: Validate Extension
+
+on:
+  pull_request:
+    paths:
+      - "extensions/**"
+      - "registry.json"
+      - "schema/**"
+      - "scripts/**"
+  push:
+    branches: [main]
+    paths:
+      - "extensions/**"
+      - "registry.json"
+      - "schema/**"
+      - "scripts/**"
+
+jobs:
+  validate:
+    name: Validate registry and extensions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install jsonschema
+
+      - name: Validate
+        run: python scripts/validate.py
+
+      - name: Validate registry.json with jq (extra safety)
+        run: jq empty registry.json
