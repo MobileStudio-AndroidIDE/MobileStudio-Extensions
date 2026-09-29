@@ -25,7 +25,7 @@ except ImportError:
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCHEMA_PATH = os.path.join(ROOT, "schema", "extension.schema.json")
-REGISTRY_PATH = os.path.join(ROOT, "registry.json")
+REGISTRY_PATH = os.path.join(ROOT, "repository.json")
 EXTENSIONS_DIR = os.path.join(ROOT, "extensions")
 
 SEMVER = re.compile(
@@ -67,32 +67,32 @@ def main():
     registry_ids = set()
     if registry is not None:
         if not isinstance(registry, dict):
-            err("registry.json: root must be an object")
+            err("repository.json: root must be an object")
         else:
             sv = registry.get("schemaVersion")
             if not sv or not SEMVER.match(str(sv)):
-                err(f"registry.json: schemaVersion missing or not SemVer: {sv!r}")
+                err(f"repository.json: schemaVersion missing or not SemVer: {sv!r}")
             exts = registry.get("extensions")
             if not isinstance(exts, list):
-                err("registry.json: 'extensions' must be an array")
+                err("repository.json: 'extensions' must be an array")
             else:
                 for i, entry in enumerate(exts):
                     if not isinstance(entry, dict):
-                        err(f"registry.json: extensions[{i}] must be an object")
+                        err(f"repository.json: extensions[{i}] must be an object")
                         continue
                     eid = entry.get("id")
                     if not eid or not ID_RE.match(str(eid)):
-                        err(f"registry.json: extensions[{i}] invalid id: {eid!r}")
+                        err(f"repository.json: extensions[{i}] invalid id: {eid!r}")
                         continue
                     if eid in registry_ids:
-                        err(f"registry.json: duplicate id in registry: {eid}")
+                        err(f"repository.json: duplicate id in registry: {eid}")
                     registry_ids.add(eid)
                     folder = os.path.join(EXTENSIONS_DIR, eid)
                     if not os.path.isdir(folder):
-                        err(f"registry.json: entry '{eid}' has no extensions/{eid}/ folder")
+                        warn(f"repository.json: entry '{eid}' has no extensions/{eid}/ folder (official entries may omit it)")
                     url = entry.get("download", "")
                     if not url.startswith("https://"):
-                        err(f"registry.json: entry '{eid}' download must be HTTPS: {url!r}")
+                        err(f"repository.json: entry '{eid}' download must be HTTPS: {url!r}")
 
     # ── 2-8. per-extension validation ────────────────────────────
     with open(SCHEMA_PATH, "r", encoding="utf-8-sig") as f:
@@ -153,7 +153,7 @@ def main():
                 err(f"extensions/{name}/extension.json: id '{eid}' does not match folder name '{name}'")
 
             # 4. SemVer
-            for key in ("version", "minMobileStudioVersion"):
+            for key in ("version", "minStudioVersion") + (("minMobileStudioVersion",) if "minMobileStudioVersion" in manifest else ()):
                 v = str(manifest.get(key, ""))
                 if not SEMVER.match(v):
                     err(f"extensions/{name}/extension.json: {key} is not SemVer: {v!r}")

@@ -1,19 +1,37 @@
-﻿name: Validate Extension
+name: Validate Extension
 
 on:
   pull_request:
     paths:
       - "extensions/**"
-      - "registry.json"
+      - "repository.json"
       - "schema/**"
       - "scripts/**"
   push:
     branches: [main]
     paths:
       - "extensions/**"
-      - "registry.json"
+      - "repository.json"
       - "schema/**"
       - "scripts/**"
+  workflow_dispatch:
+    inputs:
+      ext_id:
+        description: "Extension ID to scan (e.g. com.mobilestudio.lua)"
+        required: true
+      version:
+        description: "Extension version to scan (e.g. 1.0.0)"
+        required: true
+      download_url:
+        description: "Direct .msext download URL (optional; falls back to the Release asset)"
+        required: false
+
+# Queue: one run per extension id at a time. Newer queued runs for the SAME
+# extension replace older pending ones; different extensions run in parallel
+# (the app-side ExtensionUploadQueue enforces the global FIFO max-5 policy).
+concurrency:
+  group: scan-${{ github.event.inputs.ext_id || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   validate:
@@ -31,8 +49,129 @@ jobs:
       - name: Install dependencies
         run: pip install jsonschema
 
-      - name: Validate
+      - name: Metadata validation (repository.json + extension.json)
         run: python scripts/validate.py
 
       - name: Validate registry.json with jq (extra safety)
-        run: jq empty registry.json
+        run: jq empty repository.json
+
+      - name: Registry generation (merge folder manifests)
+        id: regen
+        run: |
+          set +e
+          python scripts/gen_registry.py
+          CODE=$?
+          set -e
+          echo "changed=$([ $CODE -eq 2 ] && echo 1 || echo 0)" >> "$GITHUB_OUTPUT"
+
+      - name: Commit regenerated repository.json
+        if: steps.regen.outputs.changed == '1' && github.event_name == 'push'
+        run: |
+          git config user.name "mobilestudio-scan-bot"
+          git config user.email "mobilestudio-scan-bot@users.noreply.github.com"
+          git add repository.json
+          git commit -m "Registry generation: merge extension folder manifests" || echo "nothing to commit"
+          git push origin main || echo "push failed"
+
+  security-scan:
+    name: Security scan
+    runs-on: ubuntu-latest
+    needs: validate
+    outputs:
+      status: ${{ steps.scan.outputs.status }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve scan target
+        id: resolve
+        run: |
+          EXT_ID="${{ github.event.inputs.ext_id }}"
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -n "$EXT_ID" ]; then
+            # App-triggered scan: download the .msext release asset
+            URL="${{ github.event.inputs.download_url }}"
+            if [ -z "$URL" ]; then
+              SHORT="${EXT_ID##*.}"
+              URL="https://github.com/${{ github.repository }}/releases/download/${SHORT}-v${VERSION}/${SHORT}.msext"
+            fi
+            mkdir -p scan-work
+            curl -fSL --retry 3 -o scan-work/package.msext "$URL" || echo "download-failed=1" >> "$GITHUB_OUTPUT"
+            echo "target=scan-work/package.msext" >> "$GITHUB_OUTPUT"
+          else
+            # PR/push scan: scan every extension source folder
+            echo "target=extensions" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Security scan (static + archive + scripts + manifest + integrity)
+        id: scan
+        run: |
+          TARGET="${{ steps.resolve.outputs.target }}"
+          if [ "$TARGET" = "scan-work/package.msext" ] && grep -q "download-failed" <<< "$(cat $GITHUB_OUTPUT || true)"; then
+            echo "status=Failed" >> "$GITHUB_OUTPUT"
+            echo "### ❌ Security scan: package download failed" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          mkdir -p scan-results
+          set +e
+          python scripts/security_scan.py "$TARGET" \
+            --ext-id "${{ github.event.inputs.ext_id }}" \
+            --version "${{ github.event.inputs.version }}" \
+            --out scan-results/scan-result.json \
+            --summary scan-results/scan-summary.md
+          CODE=$?
+          set -e
+          STATUS="Passed"
+          if [ $CODE -ne 0 ]; then STATUS="Failed"; fi
+          if grep -q '"status": "Warning"' scan-results/scan-result.json 2>/dev/null; then STATUS="Warning"; fi
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "scan_code=$CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Append scan summary to job summary
+        if: always()
+        run: |
+          if [ -f scan-results/scan-summary.md ]; then
+            cat scan-results/scan-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Commit scan result (app reads this for status/progress)
+        if: always() && github.event.inputs.ext_id != ''
+        run: |
+          EXT_ID="${{ github.event.inputs.ext_id }}"
+          VERSION="${{ github.event.inputs.version }}"
+          STATUS="${{ steps.scan.outputs.status }}"
+          git config user.name "mobilestudio-scan-bot"
+          git config user.email "mobilestudio-scan-bot@users.noreply.github.com"
+          git pull --rebase origin main || true
+          mkdir -p "scan-results/$EXT_ID"
+          cp scan-results/scan-result.json "scan-results/$EXT_ID/$VERSION.json"
+          python - "$EXT_ID" "$VERSION" "$STATUS" <<'EOF'
+          import json, sys, os
+          ext_id, version, status = sys.argv[1], sys.argv[2], sys.argv[3]
+          q = {"extensions": [], "maxConcurrent": 5, "note": "FIFO queue state"}
+          if os.path.isfile("queue.json"):
+              try: q = json.load(open("queue.json", encoding="utf-8-sig"))
+              except Exception: pass
+          entry = {"id": ext_id, "version": version, "status": status,
+                   "scannedAt": __import__("datetime").datetime.utcnow().isoformat() + "Z"}
+          exts = [e for e in q.get("extensions", []) if e.get("id") != ext_id]
+          exts.append(entry)
+          q["extensions"] = exts
+          json.dump(q, open("queue.json", "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+          EOF
+          git add "scan-results/$EXT_ID/$VERSION.json" queue.json
+          git commit -m "Scan result: $EXT_ID v$VERSION → $STATUS" || echo "nothing to commit"
+          git push origin main || echo "push failed (will retry on next scan)"
+
+      - name: Fail the job when the scan failed (blocks publish)
+        if: always()
+        run: |
+          if [ "${{ steps.scan.outputs.status }}" = "Failed" ]; then
+            echo "### ❌ Scan FAILED — package must NOT be published or downloaded." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
