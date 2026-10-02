@@ -14,14 +14,26 @@ registry from Releases (no committed index file).
 
 ```bash
 pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+`main.py` re-exports the FastAPI `app` built in `app/main.py`
+(`uvicorn app.main:app` is equivalent).
+
+### Render
+
+- **Root Directory:** `server`
+- **Start Command:**
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
 ```
 
 ## Test
 
 ```bash
 pip install -r requirements.txt
-pytest            # 47 tests: upload gate, pipeline, registry, auth
+pytest            # 51 tests: upload gate, pipeline, registry, auth, github_client
 ```
 
 ## Endpoints
