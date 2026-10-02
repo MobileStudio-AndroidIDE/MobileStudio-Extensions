@@ -1,57 +1,30 @@
 #!/usr/bin/env python3
-"""Regenerates repository.json: merges extensions/*/extension.json entries into
-the registry, filling missing entries. Official entries without a source folder
-are preserved as-is. Registry generation step of the security pipeline."""
+"""DEPRECATED - repository.json registry generation is no longer used.
 
-import json
-import os
+The extension registry source of truth is now GitHub Releases:
+
+    GET /repos/MobileStudio-AndroidIDE/MobileStudio-Extensions/releases
+
+Extensions are published as Releases (tag: <extension-id>-v<version>, asset:
+<extension-id>-v<version>.msext, body: extension.json metadata as JSON). Only
+.msext assets of non-draft releases are treated as extension packages.
+
+This script is kept as a no-op stub so that stale invocations (old CI steps,
+local scripts) do not recreate repository.json. It writes nothing and exits 0.
+"""
+
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REGISTRY = os.path.join(ROOT, "repository.json")
-EXTENSIONS = os.path.join(ROOT, "extensions")
+MESSAGE = (
+    "gen_registry.py: DEPRECATED - repository.json is no longer used. "
+    "The registry is built from GitHub Releases "
+    "(GET /repos/MobileStudio-AndroidIDE/MobileStudio-Extensions/releases). "
+    "Nothing generated."
+)
 
 
 def main():
-    reg = {"schemaVersion": "1.1.0", "name": "MobileStudio-Extensions",
-           "description": "Official MobileStudio extension registry", "extensions": []}
-    if os.path.isfile(REGISTRY):
-        try:
-            with open(REGISTRY, "r", encoding="utf-8-sig") as f:
-                loaded = json.load(f)
-            if isinstance(loaded, dict):
-                reg.update({k: v for k, v in loaded.items() if k != "extensions"})
-                if isinstance(loaded.get("extensions"), list):
-                    reg["extensions"] = loaded["extensions"]
-        except Exception:
-            pass
-
-    entries = {e.get("id"): e for e in reg["extensions"] if isinstance(e, dict) and e.get("id")}
-    added = 0
-    if os.path.isdir(EXTENSIONS):
-        for name in sorted(os.listdir(EXTENSIONS)):
-            mf = os.path.join(EXTENSIONS, name, "extension.json")
-            if not os.path.isfile(mf):
-                continue
-            try:
-                with open(mf, "r", encoding="utf-8-sig") as f:
-                    m = json.load(f)
-            except Exception:
-                continue
-            eid = m.get("id")
-            if not eid or eid in entries:
-                continue
-            entries[eid] = m
-            reg["extensions"].append(m)
-            added += 1
-
-    with open(REGISTRY, "w", encoding="utf-8") as f:
-        json.dump(reg, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    print(f"repository.json regenerated: {len(reg['extensions'])} entries (+{added} from folders)")
-    # Report changes so the workflow can decide to commit
-    if added > 0:
-        sys.exit(2)  # changed
+    print(MESSAGE)
     sys.exit(0)
 
 

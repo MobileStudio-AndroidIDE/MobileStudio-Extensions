@@ -273,7 +273,7 @@ def scan_package(package_path, manifest_override=None):
             if manifest is None:
                 for cand in ("extension.json", "./extension.json"):
                     try:
-                        manifest = json.loads(_zf.read(cand).decode("utf-8-sig"))
+                        manifest = json.loads(zf.read(cand).decode("utf-8-sig"))
                         break
                     except KeyError:
                         continue
@@ -324,6 +324,13 @@ def main():
 
     if not os.path.exists(args.target):
         print(f"ERROR: target not found: {args.target}")
+        sys.exit(1)
+
+    # .msext-only policy: file targets must be .msext packages (.zip/.apk/.aab/.jar rejected).
+    # Directory targets (extension source folders) are still allowed for CI scans.
+    if os.path.isfile(args.target) and not args.target.lower().endswith(".msext"):
+        print(f"ERROR: only .msext packages are allowed as file targets "
+              f"(got: {os.path.basename(args.target)})")
         sys.exit(1)
 
     result = scan_package(args.target)
