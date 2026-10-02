@@ -63,8 +63,11 @@ def load_json(path):
 
 def main():
     # ── 1. registry.json ─────────────────────────────────────────
-    registry = load_json(REGISTRY_PATH)
     registry_ids = set()
+    if not os.path.isfile(REGISTRY_PATH):
+        warn("repository.json not present - registry index validation skipped "
+             "(registry source of truth: GitHub Releases)")
+    registry = load_json(REGISTRY_PATH) if os.path.isfile(REGISTRY_PATH) else None
     if registry is not None:
         if not isinstance(registry, dict):
             err("repository.json: root must be an object")

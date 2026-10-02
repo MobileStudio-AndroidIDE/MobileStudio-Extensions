@@ -1,26 +1,32 @@
 name: Validate Extension
 
+# Registry source of truth = GitHub Releases
+#   GET /repos/MobileStudio-AndroidIDE/MobileStudio-Extensions/releases
+# - Only .msext packages are allowed (.zip/.apk/.aab/.jar fail the run)
+# - repository.json / registry.json must NOT exist (legacy index is removed)
+# - metadata + security checks run on every PR/push and on app-triggered dispatch
+
 on:
   pull_request:
     paths:
       - "extensions/**"
-      - "repository.json"
       - "schema/**"
       - "scripts/**"
+      - ".github/workflows/validate-extension.yml"
   push:
     branches: [main]
     paths:
       - "extensions/**"
-      - "repository.json"
       - "schema/**"
       - "scripts/**"
+      - ".github/workflows/validate-extension.yml"
   workflow_dispatch:
     inputs:
       ext_id:
-        description: "Extension ID to scan (e.g. com.mobilestudio.lua)"
+        description: "Extension ID (e.g. com.mobilestudio.lua)"
         required: true
       version:
-        description: "Extension version to scan (e.g. 1.0.0)"
+        description: "Extension version (e.g. 1.0.0)"
         required: true
       download_url:
         description: "Direct .msext download URL (optional; falls back to the Release asset)"
@@ -35,7 +41,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate registry and extensions
+    name: Validate extensions (registry = GitHub Releases)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -49,29 +55,66 @@ jobs:
       - name: Install dependencies
         run: pip install jsonschema
 
-      - name: Metadata validation (repository.json + extension.json)
-        run: python scripts/validate.py
+      - name: Registry source-of-truth guard (legacy index files rejected)
+        run: |
+          set -euo pipefail
+          BAD=""
+          for f in repository.json registry.json; do
+            if [ -f "$f" ]; then BAD="$BAD $f"; fi
+          done
+          if [ -n "$BAD" ]; then
+            {
+              echo "### Legacy registry index file(s) found:$BAD"
+              echo "The registry source of truth is GitHub Releases - delete repository.json/registry.json."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "OK: no legacy registry index files (source of truth = GitHub Releases)" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Validate registry.json with jq (extra safety)
-        run: jq empty repository.json
+      - name: Reject non-.msext package files in the tree
+        run: |
+          set -euo pipefail
+          BAD=$(find . -type f \( -iname '*.zip' -o -iname '*.apk' -o -iname '*.aab' -o -iname '*.jar' \) \
+                -not -path './.git/*' -not -path './scan-work/*' || true)
+          if [ -n "$BAD" ]; then
+            {
+              echo "### Non-.msext package files are not allowed in the repository"
+              echo '```'
+              echo "$BAD"
+              echo '```'
+              echo "Packages are distributed exclusively as GitHub Release .msext assets."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "OK: no .zip/.apk/.aab/.jar files in the tree" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Registry generation (merge folder manifests)
-        id: regen
+      - name: Security-scan any .msext committed to the tree
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r -d '' f; do
+            found=1
+            echo "Scanning $f"
+            python scripts/security_scan.py "$f"
+          done < <(find . -type f -iname '*.msext' -not -path './.git/*' -not -path './scan-work/*' -print0)
+          if [ "$found" -eq 0 ]; then
+            echo "OK: no .msext files in the tree (packages exist only as Release assets)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Metadata validation (JSON Schema, SemVer, ID, sizes, duplicates)
         run: |
           set +e
-          python scripts/gen_registry.py
+          OUT=$(python scripts/validate.py 2>&1)
           CODE=$?
           set -e
-          echo "changed=$([ $CODE -eq 2 ] && echo 1 || echo 0)" >> "$GITHUB_OUTPUT"
-
-      - name: Commit regenerated repository.json
-        if: steps.regen.outputs.changed == '1' && github.event_name == 'push'
-        run: |
-          git config user.name "mobilestudio-scan-bot"
-          git config user.email "mobilestudio-scan-bot@users.noreply.github.com"
-          git add repository.json
-          git commit -m "Registry generation: merge extension folder manifests" || echo "nothing to commit"
-          git push origin main || echo "push failed"
+          echo "$OUT"
+          {
+            echo "### Metadata validation (scripts/validate.py)"
+            echo '```'
+            echo "$OUT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $CODE
 
   security-scan:
     name: Security scan
@@ -95,10 +138,10 @@ jobs:
           VERSION="${{ github.event.inputs.version }}"
           if [ -n "$EXT_ID" ]; then
             # App-triggered scan: download the .msext release asset
+            # Convention: tag/asset = <extension-id>-v<version>
             URL="${{ github.event.inputs.download_url }}"
             if [ -z "$URL" ]; then
-              SHORT="${EXT_ID##*.}"
-              URL="https://github.com/${{ github.repository }}/releases/download/${SHORT}-v${VERSION}/${SHORT}.msext"
+              URL="https://github.com/${{ github.repository }}/releases/download/${EXT_ID}-v${VERSION}/${EXT_ID}-v${VERSION}.msext"
             fi
             mkdir -p scan-work
             curl -fSL --retry 3 -o scan-work/package.msext "$URL" || echo "download-failed=1" >> "$GITHUB_OUTPUT"
@@ -119,18 +162,64 @@ jobs:
           fi
           mkdir -p scan-results
           set +e
-          python scripts/security_scan.py "$TARGET" \
-            --ext-id "${{ github.event.inputs.ext_id }}" \
-            --version "${{ github.event.inputs.version }}" \
-            --out scan-results/scan-result.json \
-            --summary scan-results/scan-summary.md
-          CODE=$?
-          set -e
           STATUS="Passed"
-          if [ $CODE -ne 0 ]; then STATUS="Failed"; fi
-          if grep -q '"status": "Warning"' scan-results/scan-result.json 2>/dev/null; then STATUS="Warning"; fi
+          if [ "$TARGET" = "scan-work/package.msext" ]; then
+            # App-triggered: single downloaded .msext package
+            python scripts/security_scan.py "$TARGET" \
+              --ext-id "${{ github.event.inputs.ext_id }}" \
+              --version "${{ github.event.inputs.version }}" \
+              --out scan-results/scan-result.json \
+              --summary scan-results/scan-summary.md
+            CODE=$?
+            if [ $CODE -ne 0 ]; then STATUS="Failed"; fi
+            if grep -q '"status": "Warning"' scan-results/scan-result.json 2>/dev/null; then STATUS="Warning"; fi
+            if [ -f scan-results/scan-summary.md ]; then
+              cat scan-results/scan-summary.md >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            # PR/push: every extensions/<id>/ folder is scanned as its own unit
+            shopt -s nullglob
+            folders=(extensions/*/)
+            if [ ${#folders[@]} -eq 0 ]; then
+              echo "No extension folders to scan" >> "$GITHUB_STEP_SUMMARY"
+              echo '{"status": "Passed", "target": "extensions", "folders": []}' > scan-results/scan-result.json
+            fi
+            for folder in "${folders[@]}"; do
+              name=$(basename "$folder")
+              echo "::group::Security scan: $name"
+              python scripts/security_scan.py "$folder" \
+                --out "scan-results/folder-${name}.json" \
+                --summary "scan-results/folder-${name}.md"
+              CODE=$?
+              if [ $CODE -ne 0 ]; then STATUS="Failed"; fi
+              if [ -f "scan-results/folder-${name}.md" ]; then
+                cat "scan-results/folder-${name}.md" >> "$GITHUB_STEP_SUMMARY"
+              fi
+              echo "::endgroup::"
+            done
+            python - "$STATUS" <<'PY'
+          import glob, json, sys
+          status = sys.argv[1]
+          entries = []
+          for path in sorted(glob.glob("scan-results/folder-*.json")):
+              try:
+                  data = json.load(open(path, encoding="utf-8"))
+              except Exception:
+                  entries.append({"folder": path, "status": "Unknown"})
+                  continue
+              entries.append({"folder": data.get("target", path),
+                              "status": data.get("status")})
+              if data.get("status") == "Warning" and status == "Passed":
+                  status = "Warning"
+          json.dump({"status": status, "target": "extensions", "folders": entries},
+                    open("scan-results/scan-result.json", "w", encoding="utf-8"),
+                    indent=2, ensure_ascii=False)
+          open("scan-results/status.txt", "w").write(status)
+          PY
+            STATUS=$(cat scan-results/status.txt)
+          fi
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"
-          echo "scan_code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "scan target: $TARGET -> $STATUS" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Append scan summary to job summary
         if: always()
