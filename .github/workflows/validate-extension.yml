@@ -162,18 +162,64 @@ jobs:
           fi
           mkdir -p scan-results
           set +e
-          python scripts/security_scan.py "$TARGET" \
-            --ext-id "${{ github.event.inputs.ext_id }}" \
-            --version "${{ github.event.inputs.version }}" \
-            --out scan-results/scan-result.json \
-            --summary scan-results/scan-summary.md
-          CODE=$?
-          set -e
           STATUS="Passed"
-          if [ $CODE -ne 0 ]; then STATUS="Failed"; fi
-          if grep -q '"status": "Warning"' scan-results/scan-result.json 2>/dev/null; then STATUS="Warning"; fi
+          if [ "$TARGET" = "scan-work/package.msext" ]; then
+            # App-triggered: single downloaded .msext package
+            python scripts/security_scan.py "$TARGET" \
+              --ext-id "${{ github.event.inputs.ext_id }}" \
+              --version "${{ github.event.inputs.version }}" \
+              --out scan-results/scan-result.json \
+              --summary scan-results/scan-summary.md
+            CODE=$?
+            if [ $CODE -ne 0 ]; then STATUS="Failed"; fi
+            if grep -q '"status": "Warning"' scan-results/scan-result.json 2>/dev/null; then STATUS="Warning"; fi
+            if [ -f scan-results/scan-summary.md ]; then
+              cat scan-results/scan-summary.md >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            # PR/push: every extensions/<id>/ folder is scanned as its own unit
+            shopt -s nullglob
+            folders=(extensions/*/)
+            if [ ${#folders[@]} -eq 0 ]; then
+              echo "No extension folders to scan" >> "$GITHUB_STEP_SUMMARY"
+              echo '{"status": "Passed", "target": "extensions", "folders": []}' > scan-results/scan-result.json
+            fi
+            for folder in "${folders[@]}"; do
+              name=$(basename "$folder")
+              echo "::group::Security scan: $name"
+              python scripts/security_scan.py "$folder" \
+                --out "scan-results/folder-${name}.json" \
+                --summary "scan-results/folder-${name}.md"
+              CODE=$?
+              if [ $CODE -ne 0 ]; then STATUS="Failed"; fi
+              if [ -f "scan-results/folder-${name}.md" ]; then
+                cat "scan-results/folder-${name}.md" >> "$GITHUB_STEP_SUMMARY"
+              fi
+              echo "::endgroup::"
+            done
+            python - "$STATUS" <<'PY'
+          import glob, json, sys
+          status = sys.argv[1]
+          entries = []
+          for path in sorted(glob.glob("scan-results/folder-*.json")):
+              try:
+                  data = json.load(open(path, encoding="utf-8"))
+              except Exception:
+                  entries.append({"folder": path, "status": "Unknown"})
+                  continue
+              entries.append({"folder": data.get("target", path),
+                              "status": data.get("status")})
+              if data.get("status") == "Warning" and status == "Passed":
+                  status = "Warning"
+          json.dump({"status": status, "target": "extensions", "folders": entries},
+                    open("scan-results/scan-result.json", "w", encoding="utf-8"),
+                    indent=2, ensure_ascii=False)
+          open("scan-results/status.txt", "w").write(status)
+          PY
+            STATUS=$(cat scan-results/status.txt)
+          fi
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"
-          echo "scan_code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "scan target: $TARGET -> $STATUS" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Append scan summary to job summary
         if: always()
