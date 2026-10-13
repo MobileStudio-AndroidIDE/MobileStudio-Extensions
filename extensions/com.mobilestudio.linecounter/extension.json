@@ -1,0 +1,20 @@
+{
+  "id": "com.mobilestudio.linecounter",
+  "name": "Line Counter",
+  "version": "1.0.0",
+  "author": "MobileStudio-AndroidIDE",
+  "description": "열려 있는 파일의 총/코드/주석/공백 줄 수를 저장 시 토스트로 알려줍니다.",
+  "type": "plugin",
+  "download": "https://github.com/MobileStudio-AndroidIDE/MobileStudio-Extensions/releases/download/com.mobilestudio.linecounter-v1.0.0/com.mobilestudio.linecounter-v1.0.0.msext",
+  "size": 3086,
+  "sha256": "e555dc15bdf0994bc55165b7bac1b64c90cdbd49e6a3d692f08bac1e9f683ea8",
+  "minStudioVersion": "1.0.0",
+  "entryPoint": "com.mobilestudio.linecounter.LineCounter",
+  "permissions": [
+    "editor"
+  ],
+  "languages": [
+    "any"
+  ],
+  "license": "MIT"
+}
