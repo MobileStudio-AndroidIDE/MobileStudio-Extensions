@@ -177,7 +177,8 @@ class GitHubClient:
     def get_release_by_tag(self, tag: str) -> Optional[dict]:
         resp = self._request(
             "GET",
-            f"{self.cfg.releases_api_url}/releases/tags/{tag}",
+            # releases_api_url already ends with /releases — never repeat it
+            f"{self.cfg.releases_api_url}/tags/{tag}",
             expected=(200, 404),
         )
         return None if resp.status_code == 404 else resp.json()
@@ -215,7 +216,7 @@ class GitHubClient:
     def update_release(self, release_id: int, **fields) -> dict:
         resp = self._request(
             "PATCH",
-            f"{self.cfg.releases_api_url}/releases/{release_id}",
+            f"{self.cfg.releases_api_url}/{release_id}",
             json_body=fields,
             expected=(200,),
         )
