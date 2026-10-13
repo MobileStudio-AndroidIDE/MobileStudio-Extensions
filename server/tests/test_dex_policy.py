@@ -11,6 +11,7 @@ name.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -127,3 +128,93 @@ def test_scanner_still_fails_plain_binaries(tmp_path):
     pkg = make_msext(tmp_path / "so.msext", files={"libnative.so": ELF})
     report = _scan(pkg, tmp_path)
     assert report["passed"] is False
+
+
+# ------------------------------------------------------- registry schema
+# The registry schema gates the upload too, so a code extension is only
+# publishable if it knows about the entry point that names the class in dex.
+SCHEMA = json.loads((REPO_ROOT / "schema" / "extension.schema.json").read_text(encoding="utf-8"))
+
+
+def _validate(manifest: dict):
+    import jsonschema
+
+    validator = jsonschema.Draft7Validator(SCHEMA)
+    return list(validator.iter_errors(manifest))
+
+
+def test_schema_accepts_an_entry_point():
+    errors = _validate(_manifest(entryPoint="com.test.demo.Main", extensionApiVersion=1))
+    assert errors == [], [e.message for e in errors]
+
+
+def test_schema_still_accepts_metadata_only_extensions():
+    """No entryPoint at all must stay valid -- those are legitimate too."""
+    assert _validate(_manifest()) == []
+    assert _validate(_manifest(entryPoint="")) == [], \
+        "an explicit empty entryPoint means metadata-only"
+
+
+def test_schema_rejects_a_malformed_entry_point():
+    for bad in ("com..demo", ".Main", "com.test.demo.", "has space.Main",
+                "1com.bad.Main", "com.test.demo.Main;evil"):
+        errors = _validate(_manifest(entryPoint=bad))
+        assert errors, f"entryPoint {bad!r} must be rejected"
+
+
+def test_schema_rejects_an_unknown_field_still():
+    """Adding entryPoint must not accidentally open the schema to anything."""
+    assert _validate(_manifest(entryPoint="a.B", totallyUnknownField=1))
+
+
+# ------------------------------------------------- entryPoint <-> dex pairing
+def _run_validate(ws: Path) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(ws / "scripts" / "validate.py")],
+                          capture_output=True, text=True, cwd=str(ws), timeout=120)
+
+
+def _stage(tmp_path: Path, manifest: dict, files: dict) -> Path:
+    ws = tmp_path / "ws"
+    for part in ("scripts", "schema"):
+        shutil.copytree(REPO_ROOT / part, ws / part)
+    folder = ws / "extensions" / manifest["id"]
+    folder.mkdir(parents=True)
+    (folder / "extension.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (folder / "README.md").write_text("# demo\n", encoding="utf-8")
+    for name, data in files.items():
+        (folder / name).write_bytes(data)
+    return ws
+
+
+def _manifest(**extra) -> dict:
+    base = {"id": "com.test.demo", "name": "Demo Extension",
+            "version": "1.0.0", "author": "dev",
+            "description": "A demo extension used by the policy tests.",
+            "download": "https://x/y.msext", "minStudioVersion": "1.0.0"}
+    base.update(extra)
+    return base
+
+
+def test_validate_accepts_a_paired_entry_point_and_dex(tmp_path):
+    ws = _stage(tmp_path, _manifest(entryPoint="com.test.demo.Main"),
+                {"classes.dex": REAL_DEX})
+    out = _run_validate(ws)
+    assert "Validation OK" in out.stdout, out.stdout
+
+
+def test_validate_rejects_entry_point_without_dex(tmp_path):
+    ws = _stage(tmp_path, _manifest(entryPoint="com.test.demo.Main"), {})
+    out = _run_validate(ws)
+    assert "declared but the package has no classes.dex" in out.stdout, out.stdout
+
+
+def test_validate_rejects_dex_without_entry_point(tmp_path):
+    ws = _stage(tmp_path, _manifest(), {"classes.dex": REAL_DEX})
+    out = _run_validate(ws)
+    assert "classes.dex is shipped but extension.json has no entryPoint" in out.stdout, out.stdout
+
+
+def test_validate_still_accepts_metadata_only_extension(tmp_path):
+    ws = _stage(tmp_path, _manifest(), {})
+    out = _run_validate(ws)
+    assert "Validation OK" in out.stdout, out.stdout

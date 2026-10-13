@@ -60,6 +60,17 @@
       "description": "Alias of minStudioVersion (kept for compatibility).",
       "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
     },
+    "entryPoint": {
+      "type": "string",
+      "description": "Fully qualified class name of the extension entry point (the class in classes.dex implementing MobileStudioExtension). Leave empty for a metadata-only extension that ships no code.",
+      "maxLength": 255,
+      "pattern": "^$|^[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*$"
+    },
+    "extensionApiVersion": {
+      "type": "integer",
+      "description": "ExtensionApi version the extension was built against.",
+      "minimum": 1
+    },
     "type": {
       "type": "string",
       "description": "Optional extension category/type.",

@@ -34,7 +34,7 @@ SEMVER = re.compile(
     r"(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$"
 )
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,63}$")
-ALLOWED_EXT_FILES = {"extension.json", "README.md"}
+ALLOWED_EXT_FILES = {"extension.json", "README.md", "classes.dex"}
 MAX_FILE_BYTES = 10 * 1024 * 1024      # 10 MB per file
 MAX_EXT_DIR_BYTES = 50 * 1024 * 1024   # 50 MB per extension folder
 
@@ -138,7 +138,7 @@ def main():
                 if fn.startswith("."):
                     continue
                 if fn not in ALLOWED_EXT_FILES and not fn.startswith("icon."):
-                    warn(f"extensions/{name}/: unexpected entry '{fn}' (allowed: extension.json, README.md, icon.*)")
+                    warn(f"extensions/{name}/: unexpected entry '{fn}' (allowed: extension.json, README.md, classes.dex, icon.*)")
 
             # 2. JSON Schema validation
             manifest = load_json(manifest_path)
@@ -154,6 +154,17 @@ def main():
                 err(f"extensions/{name}/extension.json: invalid id format: {eid!r}")
             if eid != name:
                 err(f"extensions/{name}/extension.json: id '{eid}' does not match folder name '{name}'")
+
+            # 3b. code payload <-> entry point must agree.
+            # MobileStudio loads classes.dex by the entryPoint class name, so a
+            # declared entry point with no code never loads, and code with no
+            # entry point is unreachable.
+            entry_point = str(manifest.get("entryPoint", "") or "").strip()
+            has_dex = os.path.isfile(os.path.join(folder, "classes.dex"))
+            if entry_point and not has_dex:
+                err(f"extensions/{name}/: entryPoint '{entry_point}' is declared but the package has no classes.dex")
+            if has_dex and not entry_point:
+                err(f"extensions/{name}/: classes.dex is shipped but extension.json has no entryPoint")
 
             # 4. SemVer
             for key in ("version", "minStudioVersion") + (("minMobileStudioVersion",) if "minMobileStudioVersion" in manifest else ()):
