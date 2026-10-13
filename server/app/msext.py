@@ -29,7 +29,27 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,63}$")
 REQUIRED_MEMBERS = ("extension.json", "README.md")
 
 # extensions that are always rejected as package payloads when found as members
-FORBIDDEN_MEMBER_EXTS = (".zip", ".apk", ".aab", ".jar", ".exe", ".so", ".dll", ".dex")
+FORBIDDEN_MEMBER_EXTS = (".zip", ".apk", ".aab", ".jar", ".exe", ".so", ".dll")
+
+# DEX is the extension code format MobileStudio itself ships (ExtensionHost loads
+# classes.dex from an installed .msext), so it is allowed as a payload -- but only
+# as a genuine Dalvik executable. Anything else named .dex is a binary smuggling
+# attempt and is rejected like every other forbidden type.
+DEX_EXT = ".dex"
+DEX_MAGIC = b"dex\n"
+DEX_HEADER = 8  # "dex\n" + 3 ASCII version digits + NUL
+DEX_VERSIONS = {"035", "037", "038", "039", "040", "041"}
+DEX_MAX_BYTES = 8 * 1024 * 1024
+
+
+def dex_magic_ok(data: bytes) -> bool:
+    """True when *data* carries a real Dalvik header (magic + version + NUL)."""
+    if data is None or len(data) < DEX_HEADER:
+        return False
+    if data[:4] != DEX_MAGIC:
+        return False
+    version = data[4:7]
+    return data[7:8] == b"\x00" and version.decode("ascii", "ignore") in DEX_VERSIONS
 
 
 class GateError(Exception):
@@ -156,6 +176,19 @@ def check_package(path: Path, cfg) -> List[str]:
             ext = os.path.splitext(name.lower())[1]
             if ext in FORBIDDEN_MEMBER_EXTS:
                 errors.append(f"forbidden payload type inside package: {name}")
+            elif ext == DEX_EXT:
+                # allowed extension code format, but only as a genuine DEX
+                if info.file_size > DEX_MAX_BYTES:
+                    errors.append(f"dex too large: {name} ({info.file_size} bytes > {DEX_MAX_BYTES})")
+                else:
+                    try:
+                        head = zf.open(info).read(DEX_HEADER)
+                    except Exception as e:  # unreadable member
+                        errors.append(f"cannot read {name}: {type(e).__name__}")
+                    else:
+                        if not dex_magic_ok(head):
+                            errors.append(
+                                f"not a valid Dalvik dex file (bad header): {name}")
         if total > cfg.max_upload_bytes:
             errors.append(f"package content too large: {total} > {cfg.max_upload_bytes}")
 

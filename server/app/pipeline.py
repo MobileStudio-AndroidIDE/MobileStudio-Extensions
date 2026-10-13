@@ -313,10 +313,14 @@ def _publish(sub, cfg, gh, ws: Path, manifest: dict, pkg: Path, store: Store) ->
         pkg.read_bytes(),
         "application/zip",
     )
-    gh.update_release(release["id"], draft=False)
+    published = gh.update_release(release["id"], draft=False) or {}
 
-    sub.releaseUrl = release.get("html_url", "") or \
-        f"{cfg.web_repo_url}/releases/tag/{tag}"
+    # A draft Release has no tag yet, so GitHub hands back an html_url of the
+    # form .../releases/tag/untagged-<id>. Read the URL back after undrafting
+    # (or fall back to the tag, which is deterministic) so the link in the app
+    # actually resolves.
+    sub.releaseUrl = (published.get("html_url")
+                      or f"{cfg.web_repo_url}/releases/tag/{tag}")
     sub.downloadUrl = cfg.release_asset_url(sub.extensionId, sub.version)
     sub.event("release published with .msext asset")
     return True

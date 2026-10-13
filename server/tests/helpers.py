@@ -152,8 +152,10 @@ class FakeGitHub:
             "body": body,
             "draft": draft,
             "prerelease": prerelease,
-            "html_url": f"https://github.com/{self.cfg.owner}/{self.cfg.repo}"
-                        f"/releases/tag/{tag}",
+            "html_url": (f"https://github.com/{self.cfg.owner}/{self.cfg.repo}"
+                         f"/releases/tag/untagged-{rid:x}" if draft else
+                         f"https://github.com/{self.cfg.owner}/{self.cfg.repo}"
+                         f"/releases/tag/{tag}"),  # GitHub omits the tag for drafts
             "upload_url": f"https://uploads.github.com/repos/{self.cfg.owner}/"
                           f"{self.cfg.repo}/releases/{rid}/assets{{?name,label}}",
             "assets": [],
@@ -172,6 +174,9 @@ class FakeGitHub:
         rel.update(fields)
         if fields.get("draft") is False and not rel.get("published_at"):
             rel["published_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            # undrafting binds the tag, so the URL becomes canonical
+            rel["html_url"] = (f"https://github.com/{self.cfg.owner}/{self.cfg.repo}"
+                               f"/releases/tag/{rel['tag_name']}")
         return dict(rel)
 
     def upload_asset(self, upload_url: str, name: str, data: bytes,

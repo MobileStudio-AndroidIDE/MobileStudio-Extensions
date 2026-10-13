@@ -33,11 +33,20 @@ MAX_FILE_BYTES = 10 * 1024 * 1024        # 10 MB per file
 MAX_TOTAL_BYTES = 50 * 1024 * 1024       # 50 MB per package
 MAX_B64_BLOB = 4096                      # base64/hex blob threshold (chars)
 
-EXECUTABLE_EXTS = {".exe", ".so", ".dll", ".dylib", ".dex", ".jar", ".bin", ".o", ".a", ".out", ".apk", ".aab"}
+EXECUTABLE_EXTS = {".exe", ".so", ".dll", ".dylib", ".jar", ".bin", ".o", ".a", ".out", ".apk", ".aab"}
+# .dex is NOT in EXECUTABLE_EXTS: Dalvik bytecode is the extension code format
+# MobileStudio loads itself. It is validated separately in check_executables so a
+# real DEX passes while an ELF/PE smuggled behind a .dex name still fails.
+DEX_EXT = ".dex"
+DEX_MAGIC = b"dex\n"
+DEX_HEADER = 8
+DEX_VERSIONS = {"035", "037", "038", "039", "040", "041"}
+DEX_MAX_BYTES = 8 * 1024 * 1024
 ALLOWED_EXTS = {
     ".kt", ".kts", ".java", ".js", ".mjs", ".ts", ".tsx", ".json", ".xml", ".md",
     ".txt", ".html", ".css", ".lua", ".py", ".sh", ".bash", ".yaml", ".yml", ".sql",
-    ".c", ".cpp", ".h", ".hpp", ".cmake", ".gradle", ".properties", ".pro", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif"
+    ".c", ".cpp", ".h", ".hpp", ".cmake", ".gradle", ".properties", ".pro", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif",
+    ".dex",
 }
 TEXT_EXTS = {".kt", ".kts", ".java", ".js", ".mjs", ".ts", ".tsx", ".json", ".xml", ".md", ".txt",
              ".html", ".css", ".lua", ".py", ".sh", ".bash", ".yaml", ".yml", ".sql",
@@ -156,19 +165,41 @@ def check_executables(result, names, data_of):
     disallowed = []
     for n in names:
         ext = os.path.splitext(n.lower())[1]
+        data = data_of(n)
         if ext in EXECUTABLE_EXTS:
             binaries.append(n)
+        elif ext == DEX_EXT:
+            # Dalvik bytecode is the extension code format MobileStudio loads.
+            # Accept it only when the header proves it really is a DEX file --
+            # otherwise a .dex name would be a way to smuggle arbitrary bytes.
+            if data is None:
+                findings.append(f"cannot read dex payload: {n}")
+            elif len(data) > DEX_MAX_BYTES:
+                findings.append(f"dex too large: {n} ({len(data)} bytes > {DEX_MAX_BYTES})")
+            elif not _dex_magic_ok(data):
+                findings.append(f"not a valid Dalvik dex file (bad header): {n}")
         elif ext not in ALLOWED_EXTS and os.path.splitext(n)[1]:
             disallowed.append(n)
-        # ELF magic sniff on extension-less or suspicious files
-        data = data_of(n)
+        # ELF/PE magic sniff regardless of name: catches a binary renamed to an
+        # allowed extension (including a fake .dex).
         if data is not None and (data[:4] == b"\x7fELF" or data[:2] == b"MZ"):
             binaries.append(n)
+    binaries = list(dict.fromkeys(binaries))
     if binaries:
         findings.append(f"executable/binary files present: {', '.join(binaries[:8])}")
     if disallowed:
         findings.append(f"disallowed file types: {', '.join(disallowed[:8])}")
-    result.stage("Executable scan", "Failed" if binaries else ("Warning" if disallowed else "Passed"), findings)
+    result.stage("Executable scan", "Failed" if binaries or findings else ("Warning" if disallowed else "Passed"), findings)
+
+
+def _dex_magic_ok(data: bytes) -> bool:
+    """True when *data* carries a real Dalvik header (magic + version + NUL)."""
+    if len(data) < DEX_HEADER:
+        return False
+    if data[:4] != DEX_MAGIC:
+        return False
+    version = data[4:7]
+    return data[7:8] == b"\x00" and version.decode("ascii", "ignore") in DEX_VERSIONS
 
 
 def scan_text_content(result, names, data_of):
